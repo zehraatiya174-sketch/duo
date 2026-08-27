@@ -1,0 +1,102 @@
+# Render blueprint.
+#
+# One always-on container running Next.js and Socket.IO in a single process,
+# plus an external Postgres. The database is deliberately NOT declared here:
+# Render's own free Postgres expires after 30 days, whereas Neon's free tier
+# does not, so DATABASE_URL points at Neon and is set by hand.
+#
+# Two constraints carried over from the Railway deployment, both load-bearing:
+#
+#   * Exactly one instance. Socket.IO runs without a Redis adapter, so a second
+#     instance would put the two users in separate rooms and neither would see
+#     the other's messages. Never enable autoscaling.
+#
+#   * The free plan sleeps after 15 minutes idle. While asleep the 30-second
+#     purge sweep does not run, so view-once messages outlive their expiry —
+#     a privacy bug, not just a slow cold start. Keep it awake with a free
+#     uptime pinger hitting /api/health every 10 minutes; 744h/month sits just
+#     under the 750h free allowance.
+
+services:
+  - type: web
+    name: duo
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+
+    # Returns 503 while Postgres is unreachable, so a deploy that comes up
+    # without its database is held back rather than routed to.
+    healthCheckPath: /api/health
+
+    # Migrations are not run by the container's start command. This is the only
+    # thing standing between new code and an old schema.
+    preDeployCommand: npx prisma migrate deploy
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+
+      # --- set these in the dashboard -------------------------------------
+      # DATABASE_URL is Neon's pooled connection string.
+      - key: DATABASE_URL
+        sync: false
+      - key: BETTER_AUTH_SECRET
+        generateValue: true
+      - key: AUTHORIZED_USER_1
+        sync: false
+      - key: AUTHORIZED_USER_2
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: VERIFICATION_PASSPHRASE
+        sync: false
+
+      # 64 hex characters. Changing it makes every existing upload unreadable.
+      - key: MEDIA_ENCRYPTION_KEY
+        sync: false
+      - key: MEDIA_URL_SECRET
+        generateValue: true
+
+      # --- media storage (Supabase free tier) -----------------------------
+      - key: STORAGE_PROVIDER
+        value: supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: duo-media
+
+      # --- realtime -------------------------------------------------------
+      - key: SOCKET_PATH
+        value: /api/socket
+      # Must name the real origin. A wildcard here would let any site open a
+      # socket against this deployment.
+      - key: SOCKET_CORS_ORIGINS
+        fromService:
+          type: web
+          name: duo
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: BETTER_AUTH_URL
+        fromService:
+          type: web
+          name: duo
+          envVarKey: RENDER_EXTERNAL_URL
+
+      # --- public, inlined into the client bundle at BUILD time ------------
+      # These are read by `next build`, not at boot: changing one needs a
+      # rebuild, never just a restart. A restart silently keeps the old value.
+      - key: NEXT_PUBLIC_APP_URL
+        fromService:
+          type: web
+          name: duo
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: NEXT_PUBLIC_APP_NAME
+        value: Duo
+      - key: NEXT_PUBLIC_SOCKET_PATH
+        value: /api/socket
+      - key: NEXT_PUBLIC_MAX_UPLOAD_BYTES
+        value: '104857600'

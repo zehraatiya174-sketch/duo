@@ -1,0 +1,19 @@
+{
+  "name": "Duo",
+  "short_name": "Duo",
+  "description": "A private messaging space for two.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#111015",
+  "theme_color": "#111015",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

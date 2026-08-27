@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# Production
+build/
+dist/
+
+# Environment — contains BETTER_AUTH_SECRET, MEDIA_ENCRYPTION_KEY,
+# CLOUDINARY_API_SECRET, SMTP_PASSWORD and TURN credentials. Never commit.
+.env
+.env.local
+.env.*.local
+
+# Local media storage (STORAGE_PROVIDER=local)
+.storage/
+
+# Prisma generated client
+prisma/generated/
+
+# Testing
+coverage/
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Scratch
+*.tmp.mjs
+*.tmp.mts

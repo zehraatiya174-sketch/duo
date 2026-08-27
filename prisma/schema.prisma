@@ -1,0 +1,789 @@
+// ---------------------------------------------------------------------------
+// Duo Chat — data model
+//
+// The product is intentionally constrained to exactly two authorized humans.
+// The schema still models Chat/ChatMember as a proper many-to-many so that the
+// conversation, membership and read-state logic is correct rather than
+// hard-coded to two rows; the two-user constraint is enforced at the auth layer
+// (lib/auth/allowlist.ts) where it belongs.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearchPostgres"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Identity — shaped to match Better Auth's Prisma adapter expectations.
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+  MEMBER
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  name          String
+  image         String?
+  role          UserRole  @default(MEMBER)
+  banned        Boolean   @default(false)
+  banReason     String?
+  banExpires    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  profile       Profile?
+  settings      UserSettings?
+  accounts      Account[]
+  sessions      Session[]
+  devices       Device[]
+
+  chatMemberships  ChatMember[]
+  messages         Message[]         @relation("MessageAuthor")
+  deletedMessages  MessageDeletion[]
+  reactions        Reaction[]
+  messageViews     MessageView[]
+  pinnedMessages   PinnedMessage[]
+  notifications    Notification[]
+  auditLogs        AuditLog[]
+  outgoingCalls    Call[]            @relation("CallInitiator")
+  callParticipants CallParticipant[]
+  uploads          Attachment[]      @relation("AttachmentUploader")
+  appSettingEdits  AppSetting[]      @relation("AppSettingEditor")
+
+  @@index([email])
+  @@map("users")
+}
+
+enum PresenceStatus {
+  ONLINE
+  AWAY
+  BUSY
+  OFFLINE
+}
+
+model Profile {
+  id          String         @id @default(cuid())
+  userId      String         @unique
+  username    String         @unique
+  displayName String
+  bio         String?        @db.VarChar(280)
+  avatarUrl   String?
+  bannerUrl   String?
+  statusText  String?        @db.VarChar(80)
+  presence    PresenceStatus @default(OFFLINE)
+  lastSeenAt  DateTime       @default(now())
+  showLastSeen  Boolean      @default(true)
+  showReadReceipts Boolean   @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([username])
+  @@map("profiles")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  userId                String
+  accountId             String
+  providerId            String
+  accessToken           String?   @db.Text
+  refreshToken          String?   @db.Text
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  idToken               String?   @db.Text
+  password              String?   @db.Text
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device Device?
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String   @db.Text
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // No unique index on `value`: verification payloads can be long OAuth state
+  // blobs, and a btree index row is capped at ~2704 bytes in Postgres.
+  @@index([identifier])
+  @@index([expiresAt])
+  @@map("verifications")
+}
+
+/// A human-readable view over a Session: what browser/OS/where, so the user can
+/// audit and revoke logins from the settings screen.
+model Device {
+  id           String   @id @default(cuid())
+  userId       String
+  sessionId    String?  @unique
+  label        String
+  browser      String?
+  os           String?
+  deviceType   String?
+  ipAddress    String?
+  location     String?
+  lastActiveAt DateTime @default(now())
+  trusted      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session Session? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@map("devices")
+}
+
+// ---------------------------------------------------------------------------
+// Conversations
+// ---------------------------------------------------------------------------
+
+model Chat {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  title         String?
+  wallpaperUrl  String?
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  members  ChatMember[]
+  messages Message[]
+  pins     PinnedMessage[]
+  calls    Call[]
+
+  @@index([lastMessageAt])
+  @@map("chats")
+}
+
+model ChatMember {
+  id                String    @id @default(cuid())
+  chatId            String
+  userId            String
+  lastReadMessageId String?
+  lastReadAt        DateTime?
+  unreadCount       Int       @default(0)
+  muted             Boolean   @default(false)
+  mutedUntil        DateTime?
+  joinedAt          DateTime  @default(now())
+
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([chatId, userId])
+  @@index([userId])
+  @@map("chat_members")
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  VOICE_NOTE
+  DOCUMENT
+  CODE
+  GIF
+  STICKER
+  LOCATION
+  LINK
+  SYSTEM
+  CALL
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+/// Ephemerality mode chosen by the sender at send time.
+enum EphemeralMode {
+  NORMAL
+  VIEW_ONCE
+  VIEW_TWICE
+  CUSTOM_VIEWS
+  UNLIMITED_TIMED
+}
+
+model Message {
+  id       String @id @default(cuid())
+  clientId String @unique /// idempotency key from the optimistic client send
+  chatId   String
+  authorId String
+
+  type    MessageType   @default(TEXT)
+  status  MessageStatus @default(SENT)
+  body    String?       @db.Text
+  /// Plaintext projection of `body` used for search ranking (markdown stripped).
+  bodyText String?      @db.Text
+
+  /// Language hint for MessageType.CODE
+  codeLanguage String?
+  /// [lat, lng, label] for MessageType.LOCATION
+  locationLat   Float?
+  locationLng   Float?
+  locationLabel String?
+
+  replyToId  String?
+  forwardedFromId String?
+  forwardCount    Int    @default(0)
+
+  editedAt        DateTime?
+  editCount       Int       @default(0)
+  deletedForAll   Boolean   @default(false)
+  deletedForAllAt DateTime?
+
+  // --- ephemeral / view-once ---
+  ephemeralMode EphemeralMode @default(NORMAL)
+  /// Number of opens allowed for the recipient. null == unlimited.
+  maxViews      Int?
+  /// Opens consumed so far (recipient only; the author's own opens are free).
+  viewCount     Int           @default(0)
+  /// Absolute expiry. Enforced server-side on every read.
+  expiresAt     DateTime?
+  /// Countdown (seconds) that starts on first recipient open rather than on send.
+  destructAfterSeconds Int?
+  destructStartedAt    DateTime?
+  /// Set once the message has been purged; the row is kept as a tombstone so
+  /// the timeline does not develop holes.
+  purgedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  chat          Chat      @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  author        User      @relation("MessageAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  replyTo       Message?  @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies       Message[] @relation("MessageReplies")
+  forwardedFrom Message?  @relation("MessageForwards", fields: [forwardedFromId], references: [id], onDelete: SetNull)
+  forwards      Message[] @relation("MessageForwards")
+
+  attachments  Attachment[]
+  reactions    Reaction[]
+  views        MessageView[]
+  deletions    MessageDeletion[]
+  linkPreviews LinkPreview[]
+  mentions     Mention[]
+  pin          PinnedMessage?
+  receipts     Receipt[]
+
+  @@index([chatId, createdAt(sort: Desc)])
+  @@index([chatId, type])
+  @@index([authorId])
+  @@index([replyToId])
+  @@index([expiresAt])
+  @@map("messages")
+}
+
+/// Per-user "delete for me" tombstone. Absence of a row means visible.
+model MessageDeletion {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
+  @@map("message_deletions")
+}
+
+/// Delivery/read receipts, one row per (message, recipient).
+model Receipt {
+  id          String    @id @default(cuid())
+  messageId   String
+  userId      String
+  deliveredAt DateTime?
+  readAt      DateTime?
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId, readAt])
+  @@map("receipts")
+}
+
+/// Audit trail of ephemeral-media opens. Drives view-once enforcement and lets
+/// the sender see exactly when their disappearing media was opened.
+/// Lifecycle of a single attempt to view a sealed message.
+///
+/// A view is a *session*, not an instant. Reserving holds the allowance so two
+/// tabs cannot spend the same look, but the allowance is only actually spent
+/// once the media has demonstrably reached the reader's screen. That ordering is
+/// what stops a view-once photo being destroyed before it is ever displayed.
+enum ViewSessionState {
+  /// Allowance held; content served; nothing rendered yet.
+  RESERVED
+  /// The reader's browser confirmed the media painted.
+  RENDERED
+  /// The viewer was closed, or the lease ran out after a confirmed render.
+  /// This is the only state that counts as a spent view.
+  COMPLETED
+  /// Abandoned before anything rendered; the allowance was handed back.
+  RELEASED
+}
+
+model MessageView {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  viewedAt  DateTime @default(now())
+  ipAddress String?
+  userAgent String?  @db.Text
+  /// True when the viewer's tab lost focus while the media was open — surfaced
+  /// to the sender as a possible capture attempt.
+  suspicious Boolean @default(false)
+
+  state       ViewSessionState @default(COMPLETED)
+  reservedAt  DateTime         @default(now())
+  renderedAt  DateTime?
+  completedAt DateTime?
+  /// After this instant an unattended session is settled by the sweep: a
+  /// confirmed render is committed, anything else is handed back. Without it a
+  /// reader who closes their laptop mid-view would hold the allowance forever.
+  leaseExpiresAt DateTime?
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([userId])
+  @@index([messageId, userId, state])
+  @@index([state, leaseExpiresAt])
+  @@map("message_views")
+}
+
+model Reaction {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+  @@map("reactions")
+}
+
+model Mention {
+  id        String @id @default(cuid())
+  messageId String
+  userId    String
+  offset    Int
+  length    Int
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([userId])
+  @@map("mentions")
+}
+
+model PinnedMessage {
+  id        String   @id @default(cuid())
+  chatId    String
+  messageId String   @unique
+  pinnedById String
+  createdAt DateTime @default(now())
+
+  chat     Chat    @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  message  Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  pinnedBy User    @relation(fields: [pinnedById], references: [id], onDelete: Cascade)
+
+  @@index([chatId])
+  @@map("pinned_messages")
+}
+
+model LinkPreview {
+  id          String   @id @default(cuid())
+  messageId   String
+  url         String   @db.Text
+  canonicalUrl String? @db.Text
+  title       String?  @db.Text
+  description String?  @db.Text
+  imageUrl    String?  @db.Text
+  siteName    String?
+  faviconUrl  String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@map("link_previews")
+}
+
+// ---------------------------------------------------------------------------
+// Media
+// ---------------------------------------------------------------------------
+
+enum AttachmentKind {
+  IMAGE
+  VIDEO
+  AUDIO
+  VOICE_NOTE
+  DOCUMENT
+  ARCHIVE
+  GIF
+  STICKER
+  OTHER
+}
+
+enum StorageProvider {
+  CLOUDINARY
+  S3
+  LOCAL
+  SUPABASE
+  B2
+}
+
+model Attachment {
+  id         String          @id @default(cuid())
+  messageId  String?
+  uploaderId String
+  kind       AttachmentKind
+  provider   StorageProvider @default(CLOUDINARY)
+
+  /// Provider-side identifier (Cloudinary public_id / S3 key). Never exposed to
+  /// the browser — clients only ever receive /api/media/<id> signed routes.
+  storageKey String @db.Text
+  /// Populated only for provider=LOCAL. Also never exposed directly.
+  localPath  String? @db.Text
+
+  fileName    String
+  mimeType    String
+  byteSize    Int
+  width       Int?
+  height      Int?
+  /// Seconds, for audio/video.
+  duration    Float?
+  /// Normalised 0..1 peaks for voice-note waveform rendering.
+  waveform    Float[]
+  /// Base64 data-URI LQIP for instant image placeholders.
+  blurDataUrl String? @db.Text
+  thumbnailKey String? @db.Text
+  /// SHA-256 of the original bytes, used to dedupe re-uploads.
+  checksum    String?
+
+  /// AES-256-GCM key material when at-rest media encryption is enabled.
+  /// The thumbnail is a separate object and therefore carries its own IV/tag.
+  encrypted     Boolean @default(false)
+  encryptionIv  String?
+  encryptionTag String?
+  thumbnailIv   String?
+  thumbnailTag  String?
+
+  purgedAt  DateTime?
+  createdAt DateTime  @default(now())
+
+  message  Message? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  uploader User     @relation("AttachmentUploader", fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([uploaderId])
+  @@index([kind])
+  @@index([checksum])
+  @@map("attachments")
+}
+
+// ---------------------------------------------------------------------------
+// Calls
+// ---------------------------------------------------------------------------
+
+enum CallKind {
+  AUDIO
+  VIDEO
+  SCREEN_SHARE
+}
+
+enum CallStatus {
+  RINGING
+  ONGOING
+  ENDED
+  MISSED
+  DECLINED
+  FAILED
+}
+
+model Call {
+  id          String     @id @default(cuid())
+  chatId      String
+  initiatorId String
+  kind        CallKind
+  status      CallStatus @default(RINGING)
+  startedAt   DateTime   @default(now())
+  answeredAt  DateTime?
+  endedAt     DateTime?
+  durationSec Int?
+  endReason   String?
+
+  chat         Chat              @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  initiator    User              @relation("CallInitiator", fields: [initiatorId], references: [id], onDelete: Cascade)
+  participants CallParticipant[]
+
+  @@index([chatId, startedAt(sort: Desc)])
+  @@map("calls")
+}
+
+model CallParticipant {
+  id       String    @id @default(cuid())
+  callId   String
+  userId   String
+  joinedAt DateTime?
+  leftAt   DateTime?
+  /// Last reported WebRTC stats snapshot (jitter, rtt, packet loss, bitrate).
+  quality  Json?
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([callId, userId])
+  @@map("call_participants")
+}
+
+// ---------------------------------------------------------------------------
+// Preferences, notifications, audit
+// ---------------------------------------------------------------------------
+
+enum ThemeMode {
+  LIGHT
+  DARK
+  SYSTEM
+}
+
+enum FontSize {
+  SMALL
+  MEDIUM
+  LARGE
+  XLARGE
+}
+
+enum MediaAutoDownload {
+  NEVER
+  WIFI_ONLY
+  ALWAYS
+}
+
+model UserSettings {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  theme        ThemeMode @default(DARK)
+  accentColor  String    @default("#7C3AED")
+  wallpaperUrl String?
+  fontSize     FontSize  @default(MEDIUM)
+  language     String    @default("en")
+
+  reducedMotion  Boolean @default(false)
+  highContrast   Boolean @default(false)
+
+  notificationsEnabled Boolean @default(true)
+  notificationSound    Boolean @default(true)
+  desktopNotifications Boolean @default(true)
+  soundPack            String  @default("default")
+
+  enterToSend       Boolean           @default(true)
+  mediaAutoDownload MediaAutoDownload @default(WIFI_ONLY)
+  blurNsfwPreviews  Boolean           @default(true)
+  /// Warn the sender when the recipient switches tabs while ephemeral media is open.
+  screenshotWarnings Boolean          @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}
+
+enum NotificationKind {
+  MESSAGE
+  MENTION
+  REACTION
+  CALL
+  MISSED_CALL
+  SECURITY
+  SYSTEM
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  kind      NotificationKind
+  title     String
+  body      String?          @db.Text
+  /// Deep-link target, e.g. /chat/<slug>?m=<messageId>
+  href      String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+enum AuditAction {
+  LOGIN_SUCCESS
+  LOGIN_FAILURE
+  LOGOUT
+  LOGOUT_ALL
+  REGISTER_BLOCKED
+  PASSWORD_CHANGED
+  PASSWORD_RESET_REQUESTED
+  PASSWORD_RESET_COMPLETED
+  PROFILE_UPDATED
+  SETTINGS_UPDATED
+  DEVICE_REVOKED
+  MESSAGE_DELETED
+  MESSAGE_EDITED
+  EPHEMERAL_VIEWED
+  EPHEMERAL_PURGED
+  ATTACHMENT_UPLOADED
+  ATTACHMENT_DOWNLOADED
+  RATE_LIMITED
+  SUSPICIOUS_ACTIVITY
+  CALL_STARTED
+  CALL_ENDED
+  APP_SETTINGS_UPDATED
+  DISAPPEARING_MODE_CHANGED
+  MESSAGES_HIDDEN
+  MESSAGES_RESTORED
+  VERIFICATION_PASSED
+  VERIFICATION_FAILED
+}
+
+model AuditLog {
+  id        String      @id @default(cuid())
+  userId    String?
+  action    AuditAction
+  /// Free-form structured context (target ids, before/after, reason).
+  metadata  Json?
+  ipAddress String?
+  userAgent String?     @db.Text
+  createdAt DateTime    @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Instance-wide configuration and diagnostics
+// ---------------------------------------------------------------------------
+
+/// Global, admin-controlled settings. Exactly one row, id `global`.
+///
+/// Deliberately separate from `UserSettings`: these are decisions about the
+/// deployment rather than about a person, and a per-user table cannot express
+/// "applies to everyone, set by the administrator" without one of the two rows
+/// silently winning.
+model AppSetting {
+  id String @id @default("global")
+
+  /// Master switch. While on, every new message is created ephemeral.
+  disappearingMode Boolean @default(false)
+
+  /// The ephemeral profile applied to new messages while the switch is on.
+  /// Mirrors the options a sender can already pick per message, so nothing
+  /// about the disappearing workflow itself changes — only who chooses.
+  disappearingRule             EphemeralMode @default(VIEW_ONCE)
+  disappearingMaxViews         Int?
+  disappearingExpiresInSeconds Int?
+
+  /// Watermark, not a delete. Messages created at or before this instant are
+  /// withheld from every timeline; clearing the column brings them all back.
+  /// Nothing is removed from the database, and no media blob is touched.
+  messagesHiddenBefore DateTime?
+
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+
+  updatedBy User? @relation("AppSettingEditor", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("app_settings")
+}
+
+enum ErrorSeverity {
+  WARN
+  ERROR
+  FATAL
+}
+
+/// Server-side faults, kept for the admin panel's error log.
+///
+/// Distinct from `AuditLog`, which records things people did on purpose. This
+/// records things that went wrong, and is pruned on the maintenance sweep so a
+/// noisy week cannot fill the disk.
+model ErrorLog {
+  id        String        @id @default(cuid())
+  severity  ErrorSeverity @default(ERROR)
+  scope     String
+  message   String        @db.Text
+  stack     String?       @db.Text
+  /// Redacted structured context, as passed to the logger.
+  context   Json?
+  createdAt DateTime      @default(now())
+
+  @@index([createdAt(sort: Desc)])
+  @@index([severity, createdAt(sort: Desc)])
+  @@map("error_logs")
+}
+
+/// Persistent, cross-process rate-limit buckets. The in-memory limiter is used
+/// as an L1 cache in front of this so a restart cannot reset a lockout.
+model RateLimitBucket {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  count     Int      @default(0)
+  expiresAt DateTime
+
+  @@index([expiresAt])
+  @@map("rate_limit_buckets")
+}

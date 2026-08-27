@@ -1,0 +1,23 @@
+{
+  "root": true,
+  "extends": ["next/core-web-vitals", "prettier"],
+  "ignorePatterns": [
+    "node_modules",
+    ".next",
+    "out",
+    "coverage",
+    "playwright-report",
+    "next-env.d.ts"
+  ],
+  "rules": {
+    "no-console": ["error", { "allow": ["warn", "error"] }]
+  },
+  "overrides": [
+    {
+      "files": ["tests/**/*.{ts,tsx}", "prisma/seed.ts", "verify-supabase.ts"],
+      "rules": {
+        "no-console": "off"
+      }
+    }
+  ]
+}
