@@ -5,12 +5,16 @@ import { VERIFICATION_COOKIE, VERIFICATION_PATH } from '@/lib/auth/verification.
 /**
  * Edge-side route gate.
  *
- * Two gates, in order. The **passphrase gate** comes first and stands in front
- * of everything — the app, the sign-in screens, and the auth API alike. That
- * ordering is the point: it means a visitor who does not know the phrase cannot
- * even reach the login form, so the deployment does not advertise itself as a
- * place where accounts exist. The **session gate** behind it then redirects
- * anyone not signed in.
+ * Two gates, and the order between them is load-bearing: **sign-in first, then
+ * the passphrase.** Every other part of the app assumes it —
+ * `app/verify/page.tsx` sends a visitor with no session to `/login`,
+ * `/api/verification` is an authenticated route, and `socket/auth.ts` reads the
+ * session before it reads the ticket. Putting the passphrase first would make
+ * `/login` redirect to `/verify` while `/verify` redirects back to `/login`,
+ * which is an infinite loop rather than a stricter gate.
+ *
+ * The passphrase is therefore a second factor on an account, not a doorman in
+ * front of the building.
  *
  * Both checks are *optimistic*: they look for the presence of a cookie, never
  * its validity, so neither costs a database round trip. Real authorization
@@ -18,22 +22,10 @@ import { VERIFICATION_COOKIE, VERIFICATION_PATH } from '@/lib/auth/verification.
  * gets past this middleware and no further.
  */
 
-/** Reachable without the passphrase, or the gate could never be opened. */
-const GATE_EXEMPT_PREFIXES = [
-  VERIFICATION_PATH,
-  '/api/verification',
-  '/api/health',
-  '/_next',
-  '/favicon.ico',
-  '/icons',
-  '/sounds',
-  '/manifest.webmanifest',
-];
-
 const PUBLIC_PREFIXES = [
-  // The passphrase gate is independent of sign-in: clearing it must not require
-  // an account, or a signed-out visitor could never reach the form that lets
-  // them sign in.
+  // Reachable without a ticket, or the gate could never be opened. `/verify`
+  // itself is public so an authenticated-but-unverified visitor can load the
+  // form; the page redirects them to `/login` if they have no session.
   VERIFICATION_PATH,
   '/api/verification',
   '/login',
@@ -79,14 +71,6 @@ export function middleware(request: NextRequest): NextResponse {
   const { pathname, search } = request.nextUrl;
   const authenticated = hasSessionCookie(request);
 
-  // --- gate one: the passphrase ---------------------------------------------
-  if (!matchesPrefix(pathname, GATE_EXEMPT_PREFIXES) && !hasVerificationTicket(request)) {
-    const verifyUrl = new URL(VERIFICATION_PATH, request.url);
-    if (pathname !== '/') verifyUrl.searchParams.set('next', `${pathname}${search}`);
-    return NextResponse.redirect(verifyUrl);
-  }
-
-  // --- gate two: the session ------------------------------------------------
   if (isPublicPath(pathname)) {
     // Keep signed-in users out of the auth screens.
     if (
@@ -98,11 +82,20 @@ export function middleware(request: NextRequest): NextResponse {
     return NextResponse.next();
   }
 
+  // --- gate one: the session ------------------------------------------------
   if (!authenticated) {
     const loginUrl = new URL('/login', request.url);
     // Preserve the destination so sign-in can bounce the user back to it.
     if (pathname !== '/') loginUrl.searchParams.set('next', `${pathname}${search}`);
     return NextResponse.redirect(loginUrl);
+  }
+
+  // --- gate two: the passphrase ---------------------------------------------
+  // Only reached with a session in hand, so `/verify` always has a user to ask.
+  if (!hasVerificationTicket(request)) {
+    const verifyUrl = new URL(VERIFICATION_PATH, request.url);
+    if (pathname !== '/') verifyUrl.searchParams.set('next', `${pathname}${search}`);
+    return NextResponse.redirect(verifyUrl);
   }
 
   return NextResponse.next();

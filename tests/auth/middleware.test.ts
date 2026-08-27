@@ -23,33 +23,45 @@ function pastGate(path: string, ...cookies: string[]): string | null {
   return locationOf(path, VERIFICATION_COOKIE, ...cookies);
 }
 
+/**
+ * The passphrase gate is a **second factor on an account**, not a doorman in
+ * front of the building: sign-in is checked first, and only a visitor who
+ * already holds a session is asked for the phrase.
+ *
+ * That ordering is not a preference. `app/verify/page.tsx` sends a visitor with
+ * no session to `/login`, `/api/verification` is an authenticated route, and
+ * `socket/auth.ts` reads the session before the ticket. Asking for the phrase
+ * first makes `/login` redirect to `/verify` while `/verify` redirects back to
+ * `/login` — an infinite loop, which is what this suite previously described.
+ */
 describe('the passphrase gate', () => {
-  it('stands in front of the app, the auth screens and the auth API alike', () => {
-    for (const path of [
-      '/',
-      '/settings',
-      '/login',
-      '/register',
-      '/forgot-password',
-      '/reset-password?token=abc',
-      '/api/auth/sign-in/email',
-      '/api/messages',
-    ]) {
-      expect(locationOf(path), path).toMatch(/\/verify/);
+  it('stands in front of the app and the API, once you are signed in', () => {
+    for (const path of ['/', '/settings', '/api/messages', '/chat?m=abc']) {
+      expect(locationOf(path, SESSION), path).toMatch(/\/verify/);
     }
   });
 
-  it('holds a signed-in visitor too — the ticket is asked for independently', () => {
+  it('does not stand in front of sign-in — that would be a redirect loop', () => {
+    for (const path of ['/login', '/register', '/forgot-password', '/api/auth/sign-in/email']) {
+      expect(locationOf(path), path).toBeNull();
+    }
+  });
+
+  it('is asked for independently of how the session was obtained', () => {
     expect(locationOf('/', SESSION)).toBe(`${ORIGIN}/verify`);
   });
 
   it('keeps the destination so the gate can hand the visitor straight on', () => {
-    expect(locationOf('/settings/privacy')).toBe(`${ORIGIN}/verify?next=%2Fsettings%2Fprivacy`);
-    expect(locationOf('/chat?m=abc123')).toBe(`${ORIGIN}/verify?next=%2Fchat%3Fm%3Dabc123`);
+    expect(locationOf('/settings/privacy', SESSION)).toBe(
+      `${ORIGIN}/verify?next=%2Fsettings%2Fprivacy`,
+    );
+    expect(locationOf('/chat?m=abc123', SESSION)).toBe(
+      `${ORIGIN}/verify?next=%2Fchat%3Fm%3Dabc123`,
+    );
   });
 
   it('is not given a redundant "next" for the root', () => {
-    expect(locationOf('/')).toBe(`${ORIGIN}/verify`);
+    expect(locationOf('/', SESSION)).toBe(`${ORIGIN}/verify`);
   });
 
   it('lets through what is needed to clear it, or the gate could never open', () => {
@@ -60,6 +72,7 @@ describe('the passphrase gate', () => {
 
   it('does not accept an empty ticket cookie', () => {
     const req = new NextRequest(new URL('/', ORIGIN));
+    req.cookies.set(SESSION, 'token-value');
     req.cookies.set(VERIFICATION_COOKIE, '');
     expect(middleware(req).headers.get('location')).toBe(`${ORIGIN}/verify`);
   });

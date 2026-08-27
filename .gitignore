@@ -41,3 +41,7 @@ Thumbs.db
 # Scratch
 *.tmp.mjs
 *.tmp.mts
+*.tmp.txt
+
+# TypeScript incremental build cache
+tsconfig.tsbuildinfo

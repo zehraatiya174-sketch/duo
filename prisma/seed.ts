@@ -94,8 +94,14 @@ export async function seed(options: SeedOptions = {}): Promise<SeedResult> {
  * Better Auth stores password credentials as an `Account` with
  * `providerId: 'credential'`; there is no password column on `User`. The hash
  * uses the same Argon2 parameters the sign-in path verifies against.
+ *
+ * `accountId` must be the **user id**, not the email. Better Auth looks the
+ * credential up by `(providerId, accountId)` and treats the id as the subject
+ * within the provider — for `credential` that subject is the local user. An
+ * email here produces a row that looks correct in the table and fails every
+ * sign-in with "Invalid email or password".
  */
-async function setPassword(userId: string, email: string, password: string): Promise<void> {
+async function setPassword(userId: string, _email: string, password: string): Promise<void> {
   const hashed = await hashPassword(password);
 
   const existing = await db.account.findFirst({
@@ -104,18 +110,30 @@ async function setPassword(userId: string, email: string, password: string): Pro
   });
 
   if (existing) {
-    await db.account.update({ where: { id: existing.id }, data: { password: hashed } });
+    await db.account.update({
+      where: { id: existing.id },
+      data: { password: hashed, accountId: userId },
+    });
     return;
   }
 
   await db.account.create({
-    data: { userId, providerId: 'credential', accountId: email, password: hashed },
+    data: { userId, providerId: 'credential', accountId: userId, password: hashed },
   });
 }
 
-/** `npm run db:seed` */
+/**
+ * `npm run db:seed`
+ *
+ * `SEED_FORCE_PASSWORD=true` resets the credential on accounts that already
+ * exist. Off by default so a routine re-seed of a live database cannot silently
+ * change someone's password.
+ */
 async function main(): Promise<void> {
-  const result = await seed({ password: process.env['SEED_PASSWORD'] });
+  const result = await seed({
+    password: process.env['SEED_PASSWORD'],
+    forcePassword: process.env['SEED_FORCE_PASSWORD'] === 'true',
+  });
 
   for (const account of result.accounts) {
     log.info(account.created ? 'Created' : 'Already present', { email: account.email });
