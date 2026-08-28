@@ -53,7 +53,7 @@ than run half-configured. The variables that actually matter:
 
 | Variable | Notes |
 | --- | --- |
-| `DATABASE_URL` | PostgreSQL. Neon's free tier is a good fit. |
+| `DATABASE_URL` | PostgreSQL. Put it near the compute — see below. |
 | `AUTHORIZED_USER_1` / `_2` | The only two addresses that may hold an account. |
 | `BETTER_AUTH_SECRET` | 32+ random characters. |
 | `VERIFICATION_PASSPHRASE` | The first gate. No default, on purpose. |
@@ -66,6 +66,65 @@ than run half-configured. The variables that actually matter:
 rebuild. A restart silently keeps the old value — this has bitten this project
 before.
 
+### Where the database lives
+
+Put it next to whatever runs the app. Distance is the dominant cost in every
+query this app makes, and no amount of tuning recovers it.
+
+Measured from a machine in the Middle East against Neon's `us-east-2`, one
+network round trip was **207 ms**. A page of forty messages carries nine
+relations; with Prisma's default strategy that is one query per relation, so the
+timeline cost ten round trips — **1861 ms** — and the free tier's five-minute
+sleep added **2129 ms** to the first query after any pause.
+
+Two changes, in order of how much they gave back:
+
+- **`relationJoins`** (in `prisma/schema.prisma`) makes `join` the default on
+  PostgreSQL, so an `include` is answered by one query instead of one per
+  relation: 1861 ms → 211 ms, with byte-identical results. This helps wherever
+  the database is, including on Render.
+- **Moving the database onto the machine serving the app**: 211 ms → 7.9 ms, and
+  no cold start. Worth it whenever the app is self-hosted rather than deployed
+  next to a managed database.
+
+When self-hosting on Windows:
+
+```powershell
+./scripts/local-postgres.ps1 setup   # once; needs DUO_PG_PASSWORD set
+./scripts/local-postgres.ps1 start   # after each reboot
+```
+
+It runs on **port 5433**, leaving 5432 to the `embedded-postgres` the test
+tooling starts. No administrator rights and no Windows service: the Next server
+and the tunnel are already ordinary user processes, and this matches them.
+
+Deploying to Render instead? Use a managed database in Render's own region —
+`render.yaml` pins `ohio` for exactly this reason — and the distance problem
+disappears without any of the above.
+
+### Backups
+
+A local database is fast because it is close and vulnerable for the same
+reason: nobody else is keeping a copy.
+
+```powershell
+./scripts/backup-database.ps1                    # one snapshot now
+./scripts/backup-database.ps1 -InstallSchedule   # daily at 03:00
+```
+
+Snapshots go to `%LOCALAPPDATA%\Duo\postgres\backups`, keeping the last 14. Each
+one is read back with `pg_restore --list` before the old ones are pruned, so a
+run of silent failures cannot age out every copy that still works.
+
+To restore:
+
+```powershell
+pg_restore --no-owner --no-privileges -h localhost -p 5433 -U duo -d duo <dump>
+```
+
+Verify a backup occasionally by restoring into a scratch database and comparing
+row counts. An untested backup is a guess.
+
 ---
 
 ## Commands
@@ -77,6 +136,10 @@ npm run verify       # typecheck + lint + unit tests
 npm run test         # vitest
 npm run test:e2e     # playwright, needs a real database
 npm run db:studio    # browse the data
+
+npm run db:start     # start the local PostgreSQL (Windows, self-hosted)
+npm run db:stop      # stop it
+npm run db:backup    # one snapshot now
 ```
 
 ---
