@@ -31,6 +31,22 @@ import type { MessageActionHandlers } from './message-actions';
 import { UserMenu } from './user-menu';
 
 /**
+ * Reports a failed action, preferring what the server said.
+ *
+ * These handlers used to discard the rejection and show a fixed line, which
+ * turned a precise, actionable refusal — "This message is too old to delete for
+ * everyone" — into an unexplained "Could not delete that message". The server
+ * already writes these messages for a person to read; the fallback is only for
+ * a transport failure, which has nothing worth quoting.
+ */
+function report(fallback: string): (error: unknown) => void {
+  return (error) => {
+    const detail = error instanceof Error ? error.message.trim() : '';
+    toast.error(detail || fallback);
+  };
+}
+
+/**
  * The conversation.
  *
  * This is where the pieces meet: the query cache holds the timeline, the socket
@@ -108,19 +124,19 @@ export function ChatScreen({ chat }: { chat: ChatSummaryDTO }): React.JSX.Elemen
     (message: MessageDTO): MessageActionHandlers => ({
       onReply: () => setReplyTo(message),
       onReact: (emoji) => {
-        void request('message:react', { messageId: message.id, emoji }).catch(() =>
-          toast.error('Could not add that reaction'),
+        void request('message:react', { messageId: message.id, emoji }).catch(
+          report('Could not add that reaction'),
         );
       },
       onEdit: () => setEditingId(message.id),
       onDelete: (scope) => {
-        void request('message:delete', { messageId: message.id, scope }).catch(() =>
-          toast.error('Could not delete that message'),
+        void request('message:delete', { messageId: message.id, scope }).catch(
+          report('Could not delete that message'),
         );
       },
       onPin: (pinned) => {
-        void request('message:pin', { messageId: message.id, pinned }).catch(() =>
-          toast.error('Could not pin that message'),
+        void request('message:pin', { messageId: message.id, pinned }).catch(
+          report('Could not pin that message'),
         );
       },
       onForward: () => toast('Forwarding is not wired up yet'),
@@ -131,8 +147,8 @@ export function ChatScreen({ chat }: { chat: ChatSummaryDTO }): React.JSX.Elemen
   const onEditSubmit = React.useCallback(
     (message: MessageDTO, body: string): void => {
       setEditingId(null);
-      void request('message:edit', { messageId: message.id, body }).catch(() =>
-        toast.error('Could not save that edit'),
+      void request('message:edit', { messageId: message.id, body }).catch(
+        report('Could not save that edit'),
       );
     },
     [request],

@@ -39,8 +39,26 @@ const log = createLogger('messages');
 const TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 20_000 } as const;
 
 export const EDIT_WINDOW_MS = 15 * 60 * 1000;
-/** Window during which "delete for everyone" is permitted. */
-export const DELETE_FOR_EVERYONE_WINDOW_MS = 60 * 60 * 1000;
+
+/*
+ * "Delete for everyone" is deliberately *not* time-limited.
+ *
+ * It used to expire an hour after sending, which is the rule the large
+ * messengers use — there it protects a recipient from a stranger rewriting a
+ * conversation after they have read it. This app has two people who know each
+ * other and one of them owns it, so that protection buys nothing and the
+ * expiry only means an old photo or video cannot be taken back. Deleting is
+ * also the only way to reclaim the storage, since the blobs are purged with the
+ * message.
+ *
+ * The two guarantees that actually matter are kept: only the author may delete
+ * their own message for everyone, and every deletion still writes a
+ * `MESSAGE_DELETED` audit row, so the act is recorded even though the content
+ * is gone.
+ *
+ * Editing is still capped by `EDIT_WINDOW_MS`. Editing rewrites what was said;
+ * deleting only withdraws it, and leaves a visible tombstone behind.
+ */
 
 // ---------------------------------------------------------------------------
 // Membership
@@ -475,9 +493,6 @@ export async function deleteMessage(
 
   if (existing.authorId !== userId) {
     throw forbidden('You can only delete your own messages for everyone');
-  }
-  if (Date.now() - existing.createdAt.getTime() > DELETE_FOR_EVERYONE_WINDOW_MS) {
-    throw conflict('This message is too old to delete for everyone');
   }
 
   await db.$transaction(async (tx) => {
