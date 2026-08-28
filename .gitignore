@@ -50,3 +50,6 @@ tsconfig.tsbuildinfo
 # The skills themselves live in .agents/ and are pinned by skills-lock.json.
 .claude/
 .neon
+
+# Playwright MCP scratch output (snapshots, console logs) from local debugging.
+.playwright-mcp/
