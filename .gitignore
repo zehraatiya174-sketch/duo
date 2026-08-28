@@ -49,3 +49,4 @@ tsconfig.tsbuildinfo
 # Agent tooling: machine-local symlinks created by `npx skills add`.
 # The skills themselves live in .agents/ and are pinned by skills-lock.json.
 .claude/
+.neon
