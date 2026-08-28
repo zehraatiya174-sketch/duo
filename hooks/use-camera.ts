@@ -20,6 +20,36 @@ export interface Camera {
 }
 
 /**
+ * What to ask the camera for.
+ *
+ * `ideal` rather than `exact` throughout: it is a preference, not a
+ * requirement, so a camera that cannot manage 1080p returns the closest mode it
+ * has instead of failing to open at all. That is what makes one request work
+ * across a laptop webcam, a flagship phone and an old tablet — asking for a
+ * fixed 720p, as this used to, held the good cameras down to the worst one's
+ * ceiling.
+ *
+ * Dimensions are deliberately expressed landscape. Phone sensors are natively
+ * landscape and report themselves that way even when the phone is upright;
+ * asking for a portrait frame makes the browser crop or letterbox one out of a
+ * landscape capture, losing real pixels. Orientation is a display concern, and
+ * the preview and player both already handle it.
+ */
+function preferredVideoConstraints(): MediaTrackConstraints {
+  // Someone on a metered connection has said, at the OS level, that they would
+  // rather not spend the data — and a 1080p clip is roughly twice the bytes.
+  const connection = (
+    navigator as Navigator & { connection?: { saveData?: boolean } }
+  ).connection;
+
+  if (connection?.saveData) {
+    return { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } };
+  }
+
+  return { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } };
+}
+
+/**
  * Owns the camera stream.
  *
  * Kept apart from `useVideoRecorder`, which records whatever stream it is
@@ -66,7 +96,7 @@ export function useCamera(withAudio = true): Camera {
 
       try {
         const next = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: mode, width: { ideal: 1280 }, height: { ideal: 720 } },
+          video: { facingMode: mode, ...preferredVideoConstraints() },
           audio: withAudio,
         });
 

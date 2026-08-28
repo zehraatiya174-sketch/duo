@@ -38,18 +38,60 @@ export interface VideoRecorder {
   cancel: () => void;
 }
 
-/** Hard ceiling. A clip this long is already ~55 MB at the bitrate below. */
+/** Hard ceiling. At the bitrate cap below, a clip this long is ~90 MB. */
 export const MAX_VIDEO_SECONDS = 180;
 
 /** How often the timer ticks. Fine enough to look live, coarse enough to be free. */
 const TICK_MS = 200;
 
 /**
- * ~2.5 Mbps is the compression step of the pipeline: visually clean at 1080p
- * and small enough that the full three minutes stays well inside the upload
- * limit, without a re-encode the browser would have to do on the main thread.
+ * Bits spent per pixel per frame.
+ *
+ * The bitrate has to follow the resolution, not sit at a constant: the same
+ * 2.5 Mbps that looks clean at 1080p is wasteful at 480p, and the same constant
+ * applied to a 720p stream — which is what this used to do — spent 1080p bytes
+ * on 720p pixels while never capturing 1080p at all.
+ *
+ * 0.08 is a middle setting for the codecs `MediaRecorder` offers. VP9 stays
+ * clean below it and H.264 wants a little more, so it errs slightly generous
+ * for the worst case rather than starving it.
  */
-const VIDEO_BITS_PER_SECOND = 2_500_000;
+const BITS_PER_PIXEL = 0.08;
+
+/** Enough that even a small frame is not mush. */
+const MIN_BITS_PER_SECOND = 800_000;
+
+/**
+ * The ceiling exists for the uplink, not the encoder.
+ *
+ * 1080p30 would ask for ~5 Mbps by the formula above, and three minutes of that
+ * is 112 MB to push through a home connection. 4 Mbps keeps a full-length 1080p
+ * clip near 90 MB, which is inside the upload limit with room to spare and a
+ * difference no one can see on a phone.
+ */
+const MAX_BITS_PER_SECOND = 4_000_000;
+
+/**
+ * Picks a bitrate from what the camera actually gave us.
+ *
+ * `getSettings` reports the negotiated mode, which is the only honest source —
+ * the constraints were a preference and the camera may have answered with
+ * something else entirely.
+ */
+export function bitrateFor(stream: MediaStream): number {
+  const settings = stream.getVideoTracks()[0]?.getSettings();
+  const width = settings?.width;
+  const height = settings?.height;
+
+  // A track that will not say how large it is gets the middle of the range
+  // rather than either extreme.
+  if (!width || !height) return 2_500_000;
+
+  const fps = settings.frameRate && settings.frameRate > 0 ? settings.frameRate : 30;
+  const raw = width * height * fps * BITS_PER_PIXEL;
+
+  return Math.round(Math.min(MAX_BITS_PER_SECOND, Math.max(MIN_BITS_PER_SECOND, raw)));
+}
 
 /** Preference order; browsers disagree and `isTypeSupported` is the only oracle. */
 const CANDIDATE_TYPES = [
@@ -121,7 +163,7 @@ export function useVideoRecorder({
         const mimeType = pickMimeType();
         const recorder = new MediaRecorder(stream, {
           ...(mimeType ? { mimeType } : {}),
-          videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
+          videoBitsPerSecond: bitrateFor(stream),
         });
 
         recorderRef.current = recorder;

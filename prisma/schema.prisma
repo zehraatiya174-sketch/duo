@@ -10,7 +10,11 @@
 
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = ["fullTextSearchPostgres"]
+  // `relationJoins` lets a query with `include` be answered by one round trip
+  // instead of one per relation. A message carries nine relations, so the
+  // timeline was costing ten round trips — invisible when compute and database
+  // share a region, and the dominant cost when they do not.
+  previewFeatures = ["fullTextSearchPostgres", "relationJoins"]
 }
 
 datasource db {
