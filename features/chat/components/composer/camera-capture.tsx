@@ -1,12 +1,12 @@
 'use client';
 
-import { Camera, RefreshCw, Square, X } from 'lucide-react';
+import { Camera, RefreshCw, Square, X, Zap, ZapOff } from 'lucide-react';
 import * as React from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Spinner } from '@/components/ui/spinner';
-import { useCamera } from '@/hooks/use-camera';
+import { sensorPointFromTap, useCamera } from '@/hooks/use-camera';
 import { extensionForVideo, useVideoRecorder } from '@/hooks/use-video-recorder';
 import { cn, formatDuration } from '@/lib/utils';
 
@@ -80,12 +80,48 @@ export function CameraCapture({
     else recorder.start(camera.stream);
   };
 
+  /** Tap to focus. The mapping itself is `sensorPointFromTap`. */
+  const onFocusTap = (event: React.MouseEvent<HTMLDivElement>): void => {
+    const video = videoRef.current;
+    if (!video?.videoWidth || !camera.canFocus) return;
+
+    const box = video.getBoundingClientRect();
+    const tapX = event.clientX - box.left;
+    const tapY = event.clientY - box.top;
+
+    const point = sensorPointFromTap({
+      tapX,
+      tapY,
+      boxWidth: box.width,
+      boxHeight: box.height,
+      videoWidth: video.videoWidth,
+      videoHeight: video.videoHeight,
+      mirrored: camera.facing === 'user',
+    });
+
+    setFocusPoint({ left: tapX, top: tapY });
+    void camera.focusAt(point.x, point.y);
+  };
+
+  // The ring is drawn where the finger landed, then fades. It is the only
+  // feedback that a tap did anything at all — the focus change itself is often
+  // too subtle to notice on a small preview.
+  const [focusPoint, setFocusPoint] = React.useState<{ left: number; top: number } | null>(null);
+  React.useEffect(() => {
+    if (!focusPoint) return;
+    const timer = window.setTimeout(() => setFocusPoint(null), 900);
+    return () => window.clearTimeout(timer);
+  }, [focusPoint]);
+
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
       <DialogContent size="lg" className="overflow-hidden p-0" hideClose>
         <DialogTitle className="sr-only">Record a video</DialogTitle>
 
-        <div className="relative aspect-[3/4] w-full bg-black sm:aspect-video">
+        <div
+          className="relative aspect-[3/4] w-full bg-black sm:aspect-video"
+          onClick={camera.state === 'ready' ? onFocusTap : undefined}
+        >
           {camera.state === 'ready' ? (
             <video
               ref={videoRef}
@@ -116,10 +152,56 @@ export function CameraCapture({
             </div>
           ) : null}
 
+          {focusPoint ? (
+            <span
+              aria-hidden
+              className="pointer-events-none absolute size-16 -translate-x-1/2 -translate-y-1/2 animate-[ping_0.9s_ease-out_1] rounded-lg border-2 border-white/90"
+              style={{ left: focusPoint.left, top: focusPoint.top }}
+            />
+          ) : null}
+
+          {/* Only rendered where the hardware actually has a lamp, which in
+              practice means a phone's rear camera. */}
+          {camera.canTorch ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={(event) => {
+                // The preview behind this is the focus target.
+                event.stopPropagation();
+                void camera.toggleTorch();
+              }}
+              aria-pressed={camera.torch}
+              aria-label={camera.torch ? 'Turn the light off' : 'Turn the light on'}
+              className={cn(
+                'absolute top-2 left-2',
+                camera.torch ? 'text-amber-300' : 'text-white',
+              )}
+            >
+              {camera.torch ? <Zap className="fill-current" /> : <ZapOff />}
+            </Button>
+          ) : null}
+
+          {camera.focusLocked ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                void camera.resetFocus();
+              }}
+              className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs font-medium text-white"
+            >
+              Focus locked · tap to reset
+            </button>
+          ) : null}
+
           <Button
             variant="ghost"
             size="icon"
-            onClick={close}
+            onClick={(event) => {
+              event.stopPropagation();
+              close();
+            }}
             aria-label={recording ? 'Discard recording and close' : 'Close the camera'}
             className="absolute top-2 right-2 text-white"
           >
@@ -160,7 +242,11 @@ export function CameraCapture({
         </div>
 
         <p className="pb-4 text-center text-xs text-[var(--text-muted)]">
-          {recording ? 'Tap to stop and send' : 'Tap to start recording'}
+          {recording
+            ? 'Tap to stop and send'
+            : camera.canFocus
+              ? 'Tap to start recording · tap the preview to focus'
+              : 'Tap to start recording'}
         </p>
       </DialogContent>
     </Dialog>
