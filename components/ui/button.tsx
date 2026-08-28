@@ -83,12 +83,30 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function 
   },
   ref,
 ) {
-  const Component = asChild ? Slot : 'button';
+  const classes = cn(buttonVariants({ variant, size, block }), className);
+
+  /**
+   * `asChild` hands the styling to the caller's own element — a `Link`, an
+   * `<a>` — so the child must reach `Slot` untouched. Wrapping it, as the
+   * button branch below does for the spinner, makes Slot receive that wrapper
+   * instead and it throws: "Expected a single React element child".
+   *
+   * `loading` and `leadingIcon` are therefore not offered here. Neither is
+   * meaningful on a link, which navigates rather than submits, and silently
+   * dropping them is better than rendering a spinner that never resolves.
+   */
+  if (asChild) {
+    return (
+      <Slot ref={ref} className={classes} {...props}>
+        {children}
+      </Slot>
+    );
+  }
 
   return (
-    <Component
+    <button
       ref={ref}
-      className={cn(buttonVariants({ variant, size, block }), className)}
+      className={classes}
       disabled={disabled ?? loading}
       data-loading={loading ? '' : undefined}
       aria-busy={loading || undefined}
@@ -103,7 +121,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function 
         {leadingIcon}
         {children}
       </span>
-    </Component>
+    </button>
   );
 });
 

@@ -22,6 +22,7 @@ import { formatLastSeen } from '@/utils/datetime';
 import { Composer } from './composer/composer';
 import { MessageList } from './message-list';
 import type { MessageActionHandlers } from './message-actions';
+import { UserMenu } from './user-menu';
 
 /**
  * The conversation.
@@ -217,6 +218,11 @@ export function ChatScreen({ chat }: { chat: ChatSummaryDTO }): React.JSX.Elemen
             <Video />
           </Button>
         </Hint>
+
+        {/* Your own account: settings, the admin console, and sign out. */}
+        <span className="ml-1 shrink-0">
+          <UserMenu />
+        </span>
       </header>
 
       <MessageList
