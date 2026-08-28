@@ -88,11 +88,14 @@ build the Dockerfile.
 
 1. Create a free Postgres at [neon.tech](https://neon.tech) and copy the pooled
    connection string into `DATABASE_URL`. Render's own free Postgres expires
-   after 30 days; Neon's does not.
-2. Create a Supabase project, make a private `duo-media` bucket, and set
-   `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`.
-   The service-role key bypasses row-level security — it must never reach the
-   browser.
+   after 30 days; Neon's does not. **Put the Render service in the same region
+   as the Neon project** — a request makes several sequential round trips inside
+   one transaction, so a cross-country hop is not merely slower.
+2. Create a Supabase project, make a private bucket named exactly **`Media`**,
+   and set `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+   `SUPABASE_STORAGE_BUCKET`. The bucket name is part of every object path, so
+   it must match. The service-role key bypasses row-level security — it must
+   never reach the browser.
 3. Fill in the `sync: false` variables in the Render dashboard.
 4. **Keep it awake.** The free plan sleeps after 15 minutes idle, and a sleeping
    container runs no purge sweep, so sealed messages would survive past their
@@ -121,3 +124,4 @@ tests/          vitest suites; tests/e2e is playwright
 
 Design tokens live in `styles/globals.css` as CSS custom properties. There is no
 `tailwind.config.js` — Tailwind v4 reads the stylesheet.
+# duo

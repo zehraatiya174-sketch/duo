@@ -22,7 +22,11 @@ services:
     name: duo
     runtime: docker
     plan: free
-    region: oregon
+    # Must match the Neon project's region (us-east-2). Ohio is Render's
+    # us-east-2. Every request makes several sequential database round trips
+    # inside one transaction, so a cross-country hop is not merely slower — at
+    # ~70ms each it eats into Prisma's interactive-transaction timeout.
+    region: ohio
     dockerfilePath: ./Dockerfile
 
     # Returns 503 while Postgres is unreachable, so a deploy that comes up

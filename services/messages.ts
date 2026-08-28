@@ -27,6 +27,17 @@ import { applyDisappearingDefault, appSettings, messageVisibilityWhere } from '.
 const log = createLogger('messages');
 
 /** Window during which a sent message may still be edited. */
+/**
+ * Room for a slow link.
+ *
+ * These interactive transactions make several sequential round trips, and
+ * Prisma closes one after 5s by default. That is ample when compute and
+ * database share a region — the intended production topology — but it fails
+ * outright from a laptop against a remote Neon branch, which is exactly how
+ * local development runs. The work inside is unchanged; only the ceiling is.
+ */
+const TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 20_000 } as const;
+
 export const EDIT_WINDOW_MS = 15 * 60 * 1000;
 /** Window during which "delete for everyone" is permitted. */
 export const DELETE_FOR_EVERYONE_WINDOW_MS = 60 * 60 * 1000;
@@ -219,7 +230,7 @@ export async function createMessage(
     });
 
     return tx.message.findUniqueOrThrow({ where: { id: created.id }, include: messageInclude });
-  });
+  }, TRANSACTION_OPTIONS);
 
   return {
     message: serializeMessage(row, authorId),
@@ -495,7 +506,7 @@ export async function deleteMessage(
         metadata: { messageId: existing.id, scope: 'everyone' },
       },
     });
-  });
+  }, TRANSACTION_OPTIONS);
 
   // Blob destruction happens outside the transaction; it talks to the storage
   // provider and must not hold a database lock while doing so.
