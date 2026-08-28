@@ -29,9 +29,24 @@ services:
     # without its database is held back rather than routed to.
     healthCheckPath: /api/health
 
-    # Migrations are not run by the container's start command. This is the only
-    # thing standing between new code and an old schema.
-    preDeployCommand: npx prisma migrate deploy
+    # Migrations run here, not in a preDeployCommand: that feature is paid-only
+    # ("available for paid web services, private services, and background
+    # workers"), so on the free plan it would be silently skipped and the app
+    # would boot against an empty database.
+    #
+    # Running them at start is safe *because* this service is pinned to one
+    # instance — two containers racing the same migration is the failure this
+    # would otherwise invite. `migrate deploy` is a no-op once applied, so
+    # restarts cost one round trip. If it fails the container exits and Render
+    # holds the previous version, which is the correct outcome.
+    #
+    # It lives here rather than in the Dockerfile's CMD so the image stays
+    # host-agnostic — the same image still runs unchanged on Fly or Railway.
+    #
+    # The binary is called directly rather than through `npx`: the container
+    # runs as the unprivileged `duo` user, which `useradd --system` gave no home
+    # directory, and npx wants a writable cache under $HOME.
+    dockerCommand: sh -c "./node_modules/.bin/prisma migrate deploy && npm start"
 
     envVars:
       - key: NODE_ENV
@@ -60,7 +75,10 @@ services:
       - key: MEDIA_URL_SECRET
         generateValue: true
 
-      # --- media storage (Supabase free tier) -----------------------------
+      # --- media storage --------------------------------------------------
+      # Supabase, matching the last production configuration on Railway. The
+      # bucket is named `Media` there — capital M, and the name is part of every
+      # object path, so `duo-media` would 404 every upload and download.
       - key: STORAGE_PROVIDER
         value: supabase
       - key: SUPABASE_URL
@@ -68,7 +86,19 @@ services:
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: SUPABASE_STORAGE_BUCKET
-        value: duo-media
+        value: Media
+
+      # --- WebRTC relay ---------------------------------------------------
+      # `lib/env.ts` refuses to boot in production without a TURN relay: STUN
+      # alone cannot traverse symmetric NAT, so calls would simply never
+      # connect and the browser reports nothing useful about why.
+      # Provide TURN_USERNAME + TURN_CREDENTIAL, or TURN_STATIC_AUTH_SECRET.
+      - key: TURN_URLS
+        sync: false
+      - key: TURN_USERNAME
+        sync: false
+      - key: TURN_CREDENTIAL
+        sync: false
 
       # --- realtime -------------------------------------------------------
       - key: SOCKET_PATH

@@ -1,5 +1,10 @@
 /* eslint-disable no-console */
-import { isDevelopment, isTest } from './env';
+// Deliberately `./env.client`, not `./env`. These two flags are only
+// re-exported by the server module, but importing them from there drags the
+// entire server schema — every secret's variable name and validation rule —
+// into any client bundle that logs. The logger runs on both sides by design
+// (see the `typeof window` guard below), so it must depend on the public half.
+import { isDevelopment, isTest } from './env.client';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
