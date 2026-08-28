@@ -104,9 +104,22 @@ export function middleware(request: NextRequest): NextResponse {
 export const config = {
   matcher: [
     /*
-     * Everything except Next internals and static assets. The negative lookahead
-     * keeps the middleware off the hot path for chunks and images.
+     * Everything except Next internals, static assets, and uploads. The negative
+     * lookahead keeps the middleware off the hot path for chunks and images.
+     *
+     * `api/uploads` is excluded for a load-bearing reason, not for speed. When
+     * any middleware matches a route, Next clones and buffers that request's
+     * body so it can be read more than once, and that buffer is capped —
+     * **10 MB by default**. Past the cap the body is silently truncated rather
+     * than rejected, so a video upload arrived half-complete and died in the
+     * multipart parser as "Failed to parse body as FormData". Small photos fit
+     * under the cap, which is why only video appeared broken.
+     *
+     * Nothing is given up by skipping it: `authedRoute` calls `requireUser()`
+     * and `assertVerified()` itself, so the upload route enforces both gates
+     * independently of this file. Raising the cap instead would work, but would
+     * also mean every upload is held in memory twice.
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|avif|ico|mp3|wav|woff|woff2)$).*)',
+    '/((?!api/uploads|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|avif|ico|mp3|wav|woff|woff2)$).*)',
   ],
 };
