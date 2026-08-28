@@ -23,6 +23,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Hint } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import type { MessageDTO } from '@/types/models';
 
 /** Quick reactions offered without opening a picker. */
@@ -76,8 +77,23 @@ export function MessageActions({
     }
   };
 
+  // The bubble declares a *named* group (`group/message`), so the modifier has
+  // to name it too — a bare `group-hover:` never matches and the toolbar stays
+  // invisible forever, which is exactly what it was doing.
+  //
+  // And hover does not exist on a touch screen. The toolbar is therefore
+  // visible by default and only hidden on devices that can actually hover, so a
+  // phone shows reply/edit/delete rather than hiding them behind a gesture that
+  // cannot happen.
   return (
-    <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+    <div
+      className={cn(
+        'flex items-center gap-0.5 transition-opacity',
+        'opacity-100 [@media(hover:hover)]:opacity-0',
+        '[@media(hover:hover)]:group-hover/message:opacity-100',
+        'focus-within:opacity-100',
+      )}
+    >
       <DropdownMenu>
         <Hint label="React">
           <DropdownMenuTrigger asChild>

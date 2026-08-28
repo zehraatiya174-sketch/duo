@@ -87,8 +87,14 @@ export function AttachmentList({
                 {attachment.kind === 'VIDEO' ? (
                   <VideoAttachment
                     attachment={attachment}
-                    protectedMedia={protectedMedia}
-                    allowDownload={allowDownload}
+                    // Video is never offered for download and always guarded,
+                    // regardless of the message's ephemeral setting: clips
+                    // recorded in this app are meant to live in the app, not in
+                    // the viewer's downloads folder. `controlsList="nodownload"`
+                    // covers the player's own menu; MediaGuard covers
+                    // right-click and drag-to-save.
+                    protectedMedia
+                    allowDownload={false}
                     // A video plays where it sits, so expanding it opens the
                     // same viewer the album uses rather than the browser's.
                     onRequestFullscreen={() => setLightboxIndex(index)}

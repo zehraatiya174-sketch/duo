@@ -68,6 +68,30 @@ export function useAdminUsers(): UseQueryResult<AdminUserRow[], Error> {
   });
 }
 
+/**
+ * Renames an account. This changes the person's real display name — what they
+ * see on their own profile and what appears on their messages for both of you —
+ * not a private alias.
+ */
+export function useRenameUser(): UseMutationResult<
+  unknown,
+  Error,
+  { userId: string; displayName: string }
+> {
+  const client = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input) => api.patch('/api/admin/users', { body: input }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: queryKeys.admin.users() });
+      // The chat header and every bubble read the name from the participant
+      // list, which is a different cache.
+      void client.invalidateQueries({ queryKey: queryKeys.participants() });
+      void client.invalidateQueries({ queryKey: queryKeys.chat() });
+    },
+  });
+}
+
 export function useAdminSessions(): UseQueryResult<AdminSessionRow[], Error> {
   return useQuery({
     queryKey: queryKeys.admin.sessions(),

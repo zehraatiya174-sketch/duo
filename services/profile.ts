@@ -38,6 +38,41 @@ export async function getOwnProfile(userId: string): Promise<OwnProfileDTO> {
 }
 
 /**
+ * Renames another account, for the admin console.
+ *
+ * This edits the other person's **real** display name — the one they see on
+ * their own profile screen and the one that appears on their messages for both
+ * of you. It is not a private nickname visible only to the editor; there is no
+ * per-viewer alias in the schema, and inventing one silently would be worse
+ * than being explicit about which of the two this is.
+ *
+ * Audited under the editor's id with the target named, because someone's name
+ * changing without their action is exactly the kind of event that should be
+ * explicable afterwards.
+ */
+export async function renameAccount(
+  actorId: string,
+  targetUserId: string,
+  displayName: string,
+): Promise<OwnProfileDTO> {
+  const profile = await db.profile.update({
+    where: { userId: targetUserId },
+    data: { displayName },
+    select: selection,
+  });
+
+  await db.auditLog.create({
+    data: {
+      userId: actorId,
+      action: 'PROFILE_UPDATED',
+      metadata: { targetUserId, fields: ['displayName'], byAdmin: true },
+    },
+  });
+
+  return profile;
+}
+
+/**
  * Applies a partial profile change.
  *
  * Audited, because `showReadReceipts` and `showLastSeen` change what the other

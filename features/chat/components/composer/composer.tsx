@@ -1,7 +1,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Camera, Flame, Paperclip, Send, Smile, X } from 'lucide-react';
+import { Flame, Paperclip, Send, Smile, Video, X } from 'lucide-react';
 import * as React from 'react';
 
 import { usePreferences } from '@/components/providers/preferences-provider';
@@ -186,15 +186,15 @@ export function Composer({
           </Button>
         </Hint>
 
-        <Hint label="Camera">
+        <Hint label="Record a video">
           <Button
             variant="ghost"
             size="icon"
             disabled={disabled}
             onClick={() => setCameraOpen(true)}
-            aria-label="Open the camera"
+            aria-label="Record a video"
           >
-            <Camera />
+            <Video />
           </Button>
         </Hint>
 

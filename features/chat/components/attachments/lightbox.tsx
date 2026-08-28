@@ -94,7 +94,11 @@ export function Lightbox({
           </span>
 
           <span className="flex items-center gap-1">
-            {allowDownload && !current.purged && current.downloadUrl ? (
+            {/*
+              Never for video — see the note in attachment-list. Images keep the
+              existing rule, which the ephemeral gate already governs.
+            */}
+            {allowDownload && !isVideo && !current.purged && current.downloadUrl ? (
               <Button variant="ghost" size="icon" asChild aria-label="Download">
                 <a href={current.downloadUrl} download={current.fileName}>
                   <Download />
@@ -133,7 +137,10 @@ export function Lightbox({
                   controls
                   autoPlay
                   playsInline
-                  controlsList={allowDownload ? undefined : 'nodownload'}
+                  // Unconditional: the player's own menu must not offer a save
+                  // for video, whatever the album's download setting says.
+                  controlsList="nodownload noplaybackrate"
+                  disablePictureInPicture
                   className="max-h-[80dvh] max-w-full rounded-[var(--radius-md)]"
                 />
               ) : (

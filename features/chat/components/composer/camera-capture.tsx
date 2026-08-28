@@ -1,6 +1,6 @@
 'use client';
 
-import { Camera, Circle, RefreshCw, Square, X } from 'lucide-react';
+import { Camera, RefreshCw, Square, X } from 'lucide-react';
 import * as React from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -11,12 +11,22 @@ import { extensionForVideo, useVideoRecorder } from '@/hooks/use-video-recorder'
 import { cn, formatDuration } from '@/lib/utils';
 
 /**
- * The in-app camera.
+ * The in-app video recorder.
  *
- * Photo on tap, video on hold — the gesture everyone already knows from every
- * other messenger, so neither mode needs a label. The clip is handed back as a
- * `File` and sent through exactly the same uploader as a picked file; the
- * camera has no privileged path.
+ * Tap to start, tap again to stop — not press-and-hold. Holding a button for a
+ * minute is an unreasonable thing to ask of anyone, and on touch it competes
+ * with the browser's own long-press gesture.
+ *
+ * Video only, by design. There is no photo path here: the paperclip already
+ * sends images, and a single-purpose shutter cannot be mistimed into taking a
+ * still when a clip was wanted.
+ *
+ * **The clip never touches the disk.** `MediaRecorder` accumulates chunks in
+ * memory, they become a `Blob`, the `Blob` becomes a `File` handed straight to
+ * the uploader, and the upload is an in-memory XHR body. Nothing calls
+ * `download`, nothing writes to the filesystem, and the object URL used for the
+ * composer preview is revoked when the draft is dropped. The recording exists
+ * in this tab's memory and in the app's storage — nowhere else.
  */
 export function CameraCapture({
   open,
@@ -25,12 +35,11 @@ export function CameraCapture({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Receives the still or the clip. The sheet closes itself afterwards. */
+  /** Receives the finished clip. The sheet closes itself afterwards. */
   onCapture: (file: File, extras?: { duration?: number }) => void;
 }): React.JSX.Element {
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const camera = useCamera(true);
-  const holdTimer = React.useRef<number | null>(null);
 
   const recorder = useVideoRecorder({
     onComplete: (clip) => {
@@ -44,54 +53,37 @@ export function CameraCapture({
     },
   });
 
+  const recording = recorder.state === 'recording';
+
   // The stream is acquired when the sheet opens and released when it closes;
-  // holding the camera open behind a closed dialog would leave the hardware
-  // indicator lit.
+  // holding the camera open behind a closed dialog leaves the hardware
+  // indicator lit, which reads — reasonably — as the app watching.
   React.useEffect(() => {
     if (open) void camera.start();
     else camera.stop();
-    // `camera` is recreated every render; depending on it would loop.
+    // `camera` is a fresh object each render; depending on it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   React.useEffect(() => {
-    if (videoRef.current && camera.stream) {
-      videoRef.current.srcObject = camera.stream;
-    }
+    if (videoRef.current && camera.stream) videoRef.current.srcObject = camera.stream;
   }, [camera.stream]);
 
-  const takePhoto = async (): Promise<void> => {
-    const file = await camera.capture(videoRef.current);
-    if (!file) return;
-    onCapture(file);
+  /** Abandoning mid-recording must not silently send the footage. */
+  const close = (): void => {
+    if (recording) recorder.cancel();
     onOpenChange(false);
   };
 
-  // Press and hold for video: the recording only starts after a short delay, so
-  // an ordinary tap is unambiguously a photo.
-  const onPressStart = (): void => {
-    holdTimer.current = window.setTimeout(() => {
-      holdTimer.current = null;
-      recorder.start(camera.stream);
-    }, 350);
+  const toggle = (): void => {
+    if (recording) recorder.stop();
+    else recorder.start(camera.stream);
   };
-
-  const onPressEnd = (): void => {
-    if (holdTimer.current !== null) {
-      window.clearTimeout(holdTimer.current);
-      holdTimer.current = null;
-      void takePhoto();
-      return;
-    }
-    if (recorder.state === 'recording') recorder.stop();
-  };
-
-  const recording = recorder.state === 'recording';
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
       <DialogContent size="lg" className="overflow-hidden p-0" hideClose>
-        <DialogTitle className="sr-only">Camera</DialogTitle>
+        <DialogTitle className="sr-only">Record a video</DialogTitle>
 
         <div className="relative aspect-[3/4] w-full bg-black sm:aspect-video">
           {camera.state === 'ready' ? (
@@ -100,11 +92,8 @@ export function CameraCapture({
               autoPlay
               playsInline
               muted
-              className={cn(
-                'size-full object-cover',
-                // Mirrored on screen only; the captured frame is un-mirrored.
-                camera.facing === 'user' && 'scale-x-[-1]',
-              )}
+              // Mirrored on screen so the front camera behaves like a mirror.
+              className={cn('size-full object-cover', camera.facing === 'user' && 'scale-x-[-1]')}
             />
           ) : (
             <div className="flex size-full flex-col items-center justify-center gap-3 px-6 text-center text-white">
@@ -130,8 +119,8 @@ export function CameraCapture({
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => onOpenChange(false)}
-            aria-label="Close the camera"
+            onClick={close}
+            aria-label={recording ? 'Discard recording and close' : 'Close the camera'}
             className="absolute top-2 right-2 text-white"
           >
             <X />
@@ -141,12 +130,7 @@ export function CameraCapture({
         <div className="flex items-center justify-between gap-6 px-6 py-5">
           <div className="w-12">
             {camera.canSwitch && !recording ? (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={camera.flip}
-                aria-label="Switch camera"
-              >
+              <Button variant="ghost" size="icon" onClick={camera.flip} aria-label="Switch camera">
                 <RefreshCw />
               </Button>
             ) : null}
@@ -155,20 +139,20 @@ export function CameraCapture({
           <button
             type="button"
             disabled={camera.state !== 'ready'}
-            onPointerDown={onPressStart}
-            onPointerUp={onPressEnd}
-            onPointerLeave={onPressEnd}
-            aria-label={recording ? 'Stop recording' : 'Take a photo, or hold to record'}
+            onClick={toggle}
+            aria-pressed={recording}
+            aria-label={recording ? 'Stop recording' : 'Start recording'}
             className={cn(
               'grid size-16 place-items-center rounded-full border-4 transition-transform',
-              'border-[var(--hairline-strong)] active:scale-95 disabled:opacity-40',
-              recording && 'border-[var(--color-danger)]',
+              'active:scale-95 disabled:opacity-40',
+              recording ? 'border-[var(--color-danger)]' : 'border-[var(--hairline-strong)]',
             )}
           >
             {recording ? (
+              // A square reads as "stop" the way a second red dot does not.
               <Square className="size-6 fill-[var(--color-danger)] text-[var(--color-danger)]" />
             ) : (
-              <Circle className="size-12 fill-[var(--text-primary)] text-[var(--text-primary)]" />
+              <span className="size-11 rounded-full bg-[var(--color-danger)]" />
             )}
           </button>
 
@@ -176,7 +160,7 @@ export function CameraCapture({
         </div>
 
         <p className="pb-4 text-center text-xs text-[var(--text-muted)]">
-          {recording ? 'Release to send' : 'Tap for a photo · hold to record'}
+          {recording ? 'Tap to stop and send' : 'Tap to start recording'}
         </p>
       </DialogContent>
     </Dialog>
