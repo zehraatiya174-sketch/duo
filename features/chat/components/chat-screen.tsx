@@ -15,8 +15,14 @@ import { useMessages } from '@/hooks/use-messages';
 import { useMessageSender } from '@/hooks/use-message-sender';
 import { useReadReceipts } from '@/hooks/use-read-receipts';
 import { useRealtime } from '@/hooks/use-realtime';
+import { messageTypeFor } from '@/lib/messages/optimistic';
 import { cn } from '@/lib/utils';
-import type { ChatSummaryDTO, EphemeralSessionDTO, MessageDTO } from '@/types/models';
+import type {
+  AttachmentDTO,
+  ChatSummaryDTO,
+  EphemeralSessionDTO,
+  MessageDTO,
+} from '@/types/models';
 import { formatLastSeen } from '@/utils/datetime';
 
 import { Composer } from './composer/composer';
@@ -135,28 +141,20 @@ export function ChatScreen({ chat }: { chat: ChatSummaryDTO }): React.JSX.Elemen
   const send = React.useCallback(
     async (input: {
       body: string;
-      attachmentIds: string[];
+      attachments: AttachmentDTO[];
       ephemeral?: Parameters<typeof sender.send>[0]['ephemeral'];
     }): Promise<void> => {
-      const attachments = input.attachmentIds.length
-        ? messages
-            .flatMap((message) => message.attachments)
-            .filter((attachment) => input.attachmentIds.includes(attachment.id))
-        : [];
-
       await sender.send({
-        type: input.attachmentIds.length > 0 ? 'IMAGE' : 'TEXT',
+        type: messageTypeFor(input.attachments),
         body: input.body || undefined,
         replyTo,
-        // The uploader already holds the real DTOs; this only needs the ids,
-        // and the optimistic bubble renders without previews for a moment.
-        attachments,
+        attachments: input.attachments,
         ephemeral: input.ephemeral,
       });
 
       setReplyTo(null);
     },
-    [sender, replyTo, messages],
+    [sender, replyTo],
   );
 
   const presenceLabel =

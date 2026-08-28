@@ -16,6 +16,37 @@ export function createClientId(): string {
   return `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** How an attachment's kind decides the message's own type. */
+const TYPE_BY_KIND: Record<AttachmentDTO['kind'], MessageDTO['type']> = {
+  IMAGE: 'IMAGE',
+  VIDEO: 'VIDEO',
+  AUDIO: 'AUDIO',
+  VOICE_NOTE: 'VOICE_NOTE',
+  GIF: 'GIF',
+  STICKER: 'STICKER',
+  DOCUMENT: 'DOCUMENT',
+  // Nothing renders an archive or an unknown blob specially; both are offered
+  // as a file to download, which is what DOCUMENT already means.
+  ARCHIVE: 'DOCUMENT',
+  OTHER: 'DOCUMENT',
+};
+
+/**
+ * The type of a message, from what is attached to it.
+ *
+ * The first attachment decides: a message carrying several files is rendered by
+ * its attachment list rather than by its type, so the type only has to be
+ * honest about the leading one.
+ *
+ * This used to be `attachments.length ? 'IMAGE' : 'TEXT'`, which described
+ * every video, voice note and PDF as an image — to the timeline, to
+ * notifications, and to the media library.
+ */
+export function messageTypeFor(attachments: readonly AttachmentDTO[]): MessageDTO['type'] {
+  const first = attachments[0];
+  return first ? TYPE_BY_KIND[first.kind] : 'TEXT';
+}
+
 export interface OptimisticContext {
   authorId: string;
   attachments?: AttachmentDTO[];

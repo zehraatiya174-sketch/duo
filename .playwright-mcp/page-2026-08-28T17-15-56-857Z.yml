@@ -1,0 +1,19 @@
+- generic [active] [ref=f2e1]:
+  - link "Skip to content" [ref=f2e2] [cursor=pointer]:
+    - /url: "#main"
+  - main [ref=f2e3]:
+    - generic [ref=f2e4]:
+      - generic [ref=f2e5]:
+        - generic [ref=f2e7]:
+          - paragraph [ref=f2e8]: Humema
+          - paragraph [ref=f2e9]: Connecting…
+        - button "Start a voice call" [disabled]
+        - button "Start a video call" [disabled]
+        - button "Account menu" [ref=f2e11]
+      - generic [ref=f2e29]:
+        - button "Attach a file" [ref=f2e30]
+        - button "Record a video" [ref=f2e32]
+        - textbox "Message" [ref=f2e34]
+        - button "Toggle disappearing message" [ref=f2e35]
+        - button "Send" [disabled]
+  - region "Notifications alt+T"

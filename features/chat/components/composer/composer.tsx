@@ -11,7 +11,7 @@ import { Hint } from '@/components/ui/tooltip';
 import { useUploader } from '@/hooks/use-uploader';
 import { fadeUp } from '@/lib/motion';
 import { cn, truncate } from '@/lib/utils';
-import type { MessageDTO } from '@/types/models';
+import type { AttachmentDTO, MessageDTO } from '@/types/models';
 import type { SendMessagePayload } from '@/types/socket';
 
 import { AttachmentTray } from './attachment-tray';
@@ -24,7 +24,15 @@ export interface ComposerProps {
   onTyping: (typing: boolean) => void;
   onSend: (input: {
     body: string;
-    attachmentIds: string[];
+    /**
+     * The finished uploads themselves, not their ids.
+     *
+     * A just-uploaded attachment is detached — it belongs to no message yet —
+     * so there is nowhere for a caller holding only ids to look them up. The
+     * uploader already has the real DTOs; handing them over directly is both
+     * simpler and the only thing that can work.
+     */
+    attachments: AttachmentDTO[];
     ephemeral?: SendMessagePayload['ephemeral'];
   }) => void | Promise<void>;
 }
@@ -98,7 +106,8 @@ export function Composer({
     if (!canSend || disabled) return;
 
     const text = body.trim();
-    const attachmentIds = uploader.ready.map((attachment) => attachment.id);
+    // Read before clearing, since `clear()` empties `ready`.
+    const attachments = uploader.ready;
 
     // Cleared before awaiting: the send is optimistic, and a composer that
     // stayed full until the server answered would invite a double send.
@@ -108,7 +117,7 @@ export function Composer({
 
     await onSend({
       body: text,
-      attachmentIds,
+      attachments,
       ...(sealed ? { ephemeral: { mode: 'VIEW_ONCE' as const } } : {}),
     });
   };
