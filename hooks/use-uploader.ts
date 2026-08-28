@@ -5,9 +5,15 @@ import { toast } from 'sonner';
 
 import { uploadWithProgress } from '@/lib/api/client';
 import { clientEnv } from '@/lib/env.client';
-import { AppError } from '@/lib/errors';
 import { prepareImage, probeVideo } from '@/lib/media/compress';
 import { createClientId } from '@/lib/messages/optimistic';
+import {
+  AUTO_RETRIES,
+  CHUNK_THRESHOLD_BYTES,
+  isRetryable,
+  uploadChunked,
+  type ChunkedExtras,
+} from '@/lib/uploads/client';
 import { backoffDelay, isAbortError, sleep } from '@/lib/utils';
 import type { AttachmentDTO } from '@/types/models';
 import { formatBytes } from '@/utils/datetime';
@@ -69,36 +75,6 @@ interface UploadResponse {
 }
 
 const MAX_FILES = 10;
-
-/**
- * Extra attempts made without asking.
- *
- * A dropped connection mid-upload is common on mobile and costs nothing to try
- * again; surfacing it as a failure the sender has to notice and press is worse
- * than simply retrying.
- */
-const AUTO_RETRIES = 2;
-
-/**
- * Failures that will recur identically however many times the same bytes are
- * sent, so retrying only postpones the message the sender needs to read.
- */
-const FINAL_ERROR_CODES = new Set([
-  'PAYLOAD_TOO_LARGE',
-  'UNSUPPORTED_MEDIA_TYPE',
-  'VALIDATION_FAILED',
-  'BAD_REQUEST',
-  'UNAUTHORIZED',
-  'FORBIDDEN',
-  'NOT_AUTHORIZED_ACCOUNT',
-  'VERIFICATION_REQUIRED',
-  'RATE_LIMITED',
-]);
-
-function isRetryable(error: unknown): boolean {
-  if (isAbortError(error)) return false;
-  return !(error instanceof AppError) || !FINAL_ERROR_CODES.has(error.code);
-}
 
 /** Extensions a browser hands over typeless; treated as video regardless. */
 const VIDEO_EXTENSION = /\.(mp4|m4v|mov|webm|mkv|avi|wmv|flv|3gp|3g2|mpe?g|m2ts|mts|ts|ogv)$/i;
@@ -170,6 +146,11 @@ export function useUploader(): Uploader {
       const controller = new AbortController();
       controllers.current.set(id, controller);
 
+      // `poster` is a Blob and travels only in the multipart body; everything
+      // else is measurement that both upload paths accept.
+      const { poster: _poster, ...measured } = extras;
+      const chunked = file.size > CHUNK_THRESHOLD_BYTES;
+
       const buildForm = (): FormData => {
         const form = new FormData();
         form.append('files', file, file.name);
@@ -181,18 +162,27 @@ export function useUploader(): Uploader {
         return form;
       };
 
+      const sendWhole = async (): Promise<AttachmentDTO> => {
+        const response = await uploadWithProgress<UploadResponse>('/api/uploads', buildForm(), {
+          onProgress: (percent) => patch(id, { progress: percent }),
+          signal: controller.signal,
+        });
+        const attachment = response.attachments[0];
+        if (!attachment) throw new Error('The upload returned no attachment');
+        return attachment;
+      };
+
       try {
         for (let attempt = 0; ; attempt += 1) {
           patch(id, { status: 'uploading', progress: 0, error: null });
 
           try {
-            const response = await uploadWithProgress<UploadResponse>('/api/uploads', buildForm(), {
-              onProgress: (percent) => patch(id, { progress: percent }),
-              signal: controller.signal,
-            });
-
-            const attachment = response.attachments[0];
-            if (!attachment) throw new Error('The upload returned no attachment');
+            const attachment = chunked
+              ? await uploadChunked(file, measured satisfies ChunkedExtras, {
+                  onProgress: (percent) => patch(id, { progress: percent }),
+                  signal: controller.signal,
+                })
+              : await sendWhole();
 
             patch(id, { status: 'done', progress: 100, attachment });
             return attachment;
@@ -200,7 +190,11 @@ export function useUploader(): Uploader {
             // An abort is a deliberate removal, not a failure worth reporting.
             if (isAbortError(error)) return null;
 
-            if (attempt >= AUTO_RETRIES || !isRetryable(error)) {
+            // A chunked upload has already retried the part that failed. Going
+            // round again would re-send the entire file for the same reason it
+            // failed the first time, which on a large video is the most
+            // expensive possible way to fail twice.
+            if (chunked || attempt >= AUTO_RETRIES || !isRetryable(error)) {
               patch(id, {
                 status: 'error',
                 progress: 0,

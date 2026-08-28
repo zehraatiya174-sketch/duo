@@ -132,5 +132,13 @@ services:
         value: Duo
       - key: NEXT_PUBLIC_SOCKET_PATH
         value: /api/socket
+      # Chunked upload removes the per-request body cap, so what bounds a file
+      # here is the free plan's 512 MB of RAM: completing an upload reassembles
+      # it in memory and encrypts it, costing a few multiples of its size. The
+      # server value is set explicitly because `MAX_UPLOAD_BYTES` otherwise
+      # defaults to 512 MB, and the two must agree or the composer accepts
+      # files the server will refuse.
       - key: NEXT_PUBLIC_MAX_UPLOAD_BYTES
+        value: '104857600'
+      - key: MAX_UPLOAD_BYTES
         value: '104857600'

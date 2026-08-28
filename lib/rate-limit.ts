@@ -44,6 +44,12 @@ export const RATE_LIMITS = {
   /// lease sweep then has to clean up. Deliberately looser than the open limit.
   ephemeralSettle: { limit: 120, windowSeconds: 60 },
   upload: { limit: 40, windowSeconds: 300 },
+  /// One request per 5 MB slice of a chunked upload, so this counts parts
+  /// rather than files: a single large video is dozens of these, and the
+  /// `upload` policy above would reject it halfway through. Volume is already
+  /// bounded elsewhere — each part is capped at the chunk size, each session at
+  /// `MAX_UPLOAD_BYTES`, and opening a session costs an `upload` grant.
+  uploadPart: { limit: 600, windowSeconds: 300 },
   mediaRead: { limit: 600, windowSeconds: 60 },
   search: { limit: 60, windowSeconds: 60 },
   linkPreview: { limit: 30, windowSeconds: 300 },
