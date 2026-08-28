@@ -32,6 +32,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1095.0",
     "@hookform/resolvers": "^3.9.1",
+    "@next/env": "^15.5.24",
     "@node-rs/argon2": "^2.0.2",
     "@prisma/client": "^6.2.1",
     "@radix-ui/react-avatar": "^1.1.2",
