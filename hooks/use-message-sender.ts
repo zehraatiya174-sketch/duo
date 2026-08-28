@@ -79,15 +79,36 @@ export function useMessageSender(chatId: string | null, selfId: string): Message
     [client, syncPending],
   );
 
-  /** One delivery attempt. Resolves whether or not it succeeded. */
+  /**
+   * One delivery attempt. Resolves whether or not it succeeded.
+   *
+   * The socket is tried first when it is up, because a message sent over the
+   * open connection reaches the other person in the same round trip. HTTP is
+   * not only the path for when the socket is *known* to be down — it also
+   * catches the case where the socket believes it is connected but the
+   * acknowledgement never comes back. That happens for real: a large upload
+   * saturates the uplink for a minute, the heartbeat cannot get through, and a
+   * send issued in that window times out against a connection that is dead but
+   * has not noticed yet. Without this fallback the message is marked failed
+   * while a perfectly good HTTP route sits unused.
+   *
+   * Sending twice is safe — the server is idempotent on `clientId` — so a
+   * socket send that actually landed but lost its acknowledgement resolves to
+   * the original message rather than creating a second one.
+   */
   const attempt = React.useCallback(
     async (payload: SendMessagePayload): Promise<void> => {
       try {
-        const message =
-          status === 'connected'
-            ? await request('message:send', payload)
-            : await api.post<MessageDTO>('/api/messages', { body: payload });
-        settle(message);
+        if (status === 'connected') {
+          try {
+            settle(await request('message:send', payload));
+            return;
+          } catch {
+            // Fall through to HTTP rather than reporting a failure the other
+            // transport may well not have.
+          }
+        }
+        settle(await api.post<MessageDTO>('/api/messages', { body: payload }));
       } catch (error) {
         fail(payload, error);
       }

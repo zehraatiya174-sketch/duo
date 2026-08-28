@@ -62,7 +62,16 @@ export function createSocketServer(httpServer: HttpServer): SocketServerHandle {
     // proxies that mangle upgrades.
     transports: ['websocket', 'polling'],
     pingInterval: 20_000,
-    pingTimeout: 25_000,
+    /*
+     * Deliberately generous. This app sends large uploads over the same uplink
+     * the socket runs on, and a home connection pushing a 100 MB video queues
+     * deeply enough that a heartbeat can take tens of seconds to come back. At
+     * the old 25 s the connection was declared dead partway through every big
+     * upload — exactly when the user is most active — and the reconnect landed
+     * right as they pressed send. A truly dead connection is still noticed:
+     * the client watches `navigator.onLine` and reacts long before this fires.
+     */
+    pingTimeout: 60_000,
     connectionStateRecovery: {
       // Lets a client that blipped offline resume its rooms and replay missed
       // packets without a full re-handshake.

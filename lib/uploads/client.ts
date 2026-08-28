@@ -25,11 +25,15 @@ export const CHUNK_THRESHOLD_BYTES = 8 * 1024 * 1024;
 /**
  * Parts in flight at once.
  *
- * Enough to keep the connection busy while a response is coming back — strictly
- * sequential parts idle the upstream for a round trip each — without opening so
- * many that they compete for the same bandwidth and all report slow progress.
+ * Two, not more. One stream leaves the uplink idle for a round trip between
+ * parts; three does not upload meaningfully faster than two — a single TCP
+ * stream already fills a typical home uplink — but each extra stream deepens
+ * the queue on that uplink, and everything else sharing it waits behind that
+ * queue. In this app "everything else" is the realtime socket, whose heartbeat
+ * was being delayed past its timeout, dropping the connection partway through
+ * every large upload.
  */
-const PART_CONCURRENCY = 3;
+const PART_CONCURRENCY = 2;
 
 /**
  * Extra attempts made without asking.
